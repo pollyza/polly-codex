@@ -129,6 +129,10 @@ generateButton?.addEventListener("click", async () => {
     const jobData = await jobResponse.json();
 
     if (!jobResponse.ok) {
+      if (jobData?.error?.code === "INSUFFICIENT_QUOTA") {
+        minutesRemainingEl.textContent = "0.0";
+        throw new Error("No free minutes left for this month. Open Billing to review usage.");
+      }
       throw new Error(jobData.error?.message || "Failed to create job.");
     }
 

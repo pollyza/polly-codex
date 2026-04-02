@@ -3,7 +3,7 @@ import { buildContentHash, buildHostScript, buildSummary, cleanText, detectLangu
 import { generatePodcastAssets, hasOpenAIConfig, synthesizeSpeech } from "@/lib/openai";
 import { seededAudios, seededJobs, seededScripts, seededSources, seededUsage, DEMO_USER_ID } from "@/lib/seed-data";
 import { getSupabaseServerClient } from "@/lib/supabase-shared";
-import type { AudioRecord, JobDetail, JobRecord, OutputLanguage, ScriptRecord, SourceRecord, SourceType, UsageSummary } from "@/lib/types";
+import type { AudioRecord, JobDetail, JobRecord, OutputLanguage, ScriptRecord, SourceRecord, SourceType, UsageLedgerEntry, UsageSummary } from "@/lib/types";
 
 const memory = {
   sources: [...seededSources],
@@ -13,9 +13,17 @@ const memory = {
   usage: { ...seededUsage }
 };
 const runningJobs = new Set<string>();
+const MONTHLY_FREE_MINUTES = 60;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function getCurrentPeriodKey() {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 function normalizeDuration(value: number): 3 | 5 | 8 {
@@ -210,13 +218,14 @@ async function saveAudio(audio: AudioRecord, buffer?: Buffer) {
 async function consumeUsage(userId: string, jobId: string, minutes: number) {
   const supabase = getSupabaseServerClient();
   if (supabase) {
+    await ensureMonthlyGrant(userId);
     const { error } = await supabase.from("usage_ledger").insert({
       user_id: userId,
       job_id: jobId,
       entry_type: "consume_generation",
       minutes_delta: -minutes,
       note: "Generated audio briefing",
-      period_key: seededUsage.periodKey
+      period_key: getCurrentPeriodKey()
     });
     if (error) {
       throw error;
@@ -226,6 +235,102 @@ async function consumeUsage(userId: string, jobId: string, minutes: number) {
 
   memory.usage.minutesUsed += minutes;
   memory.usage.minutesRemaining = Math.max(0, memory.usage.freeMinutesTotal - memory.usage.minutesUsed);
+}
+
+async function ensureMonthlyGrant(userId: string) {
+  const supabase = getSupabaseServerClient();
+  const periodKey = getCurrentPeriodKey();
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("usage_ledger")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("period_key", periodKey)
+      .eq("entry_type", "grant_monthly_free")
+      .limit(1);
+    if (error) {
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const { error: insertError } = await supabase.from("usage_ledger").insert({
+        user_id: userId,
+        entry_type: "grant_monthly_free",
+        minutes_delta: MONTHLY_FREE_MINUTES,
+        note: "Monthly free allowance",
+        period_key: periodKey
+      });
+      if (insertError) {
+        throw insertError;
+      }
+    }
+    return;
+  }
+
+  memory.usage.periodKey = periodKey;
+  memory.usage.freeMinutesTotal = MONTHLY_FREE_MINUTES;
+  memory.usage.minutesRemaining = Math.max(0, memory.usage.freeMinutesTotal - memory.usage.minutesUsed);
+}
+
+export async function listUsageLedger(userId = DEMO_USER_ID): Promise<UsageLedgerEntry[]> {
+  const supabase = getSupabaseServerClient();
+  const periodKey = getCurrentPeriodKey();
+
+  if (supabase) {
+    await ensureMonthlyGrant(userId);
+    const { data, error } = await supabase
+      .from("usage_ledger")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("period_key", periodKey)
+      .order("created_at", { ascending: false });
+    if (error) {
+      throw error;
+    }
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      userId: String(row.user_id),
+      jobId: (row.job_id as string | null) ?? null,
+      entryType: row.entry_type as UsageLedgerEntry["entryType"],
+      minutesDelta: Number(row.minutes_delta),
+      note: String(row.note ?? ""),
+      periodKey: String(row.period_key),
+      createdAt: String(row.created_at)
+    }));
+  }
+
+  await ensureMonthlyGrant(userId);
+  return [
+    {
+      id: "usage_grant_demo",
+      userId,
+      jobId: null,
+      entryType: "grant_monthly_free",
+      minutesDelta: MONTHLY_FREE_MINUTES,
+      note: "Monthly free allowance",
+      periodKey,
+      createdAt: new Date(`${periodKey}-01T00:00:00Z`).toISOString()
+    },
+    ...memory.jobs
+      .filter((job) => job.userId === userId && job.status === "succeeded")
+      .map((job) => ({
+        id: `usage_${job.id}`,
+        userId,
+        jobId: job.id,
+        entryType: "consume_generation" as const,
+        minutesDelta: -job.targetDurationMinutes,
+        note: job.title,
+        periodKey,
+        createdAt: job.finishedAt ?? job.updatedAt
+      }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  ];
+}
+
+async function getMinutesRemaining(userId: string) {
+  const usage = await getUsageSummary(userId);
+  return usage.minutesRemaining;
 }
 
 async function runJob(jobId: string, userId = DEMO_USER_ID) {
@@ -446,7 +551,8 @@ export async function listJobSummaries(userId = DEMO_USER_ID) {
 export async function getUsageSummary(userId = DEMO_USER_ID) {
   const supabase = getSupabaseServerClient();
   if (supabase) {
-    const periodKey = seededUsage.periodKey;
+    const periodKey = getCurrentPeriodKey();
+    await ensureMonthlyGrant(userId);
     const { data, error } = await supabase
       .from("usage_ledger")
       .select("minutes_delta")
@@ -458,12 +564,13 @@ export async function getUsageSummary(userId = DEMO_USER_ID) {
     const balance = (data ?? []).reduce((sum, row) => sum + Number(row.minutes_delta), 0);
     return {
       periodKey,
-      freeMinutesTotal: 60,
-      minutesUsed: Math.max(0, 60 - balance),
+      freeMinutesTotal: MONTHLY_FREE_MINUTES,
+      minutesUsed: Math.max(0, MONTHLY_FREE_MINUTES - balance),
       minutesRemaining: Math.max(0, balance)
     };
   }
 
+  await ensureMonthlyGrant(userId);
   return usageFromMemory();
 }
 
@@ -568,6 +675,12 @@ export async function createSource(input: CreateSourceInput, userId = DEMO_USER_
 }
 
 export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
+  const targetDurationMinutes = normalizeDuration(input.targetDurationMinutes);
+  const remaining = await getMinutesRemaining(userId);
+  if (remaining < targetDurationMinutes) {
+    throw new Error("INSUFFICIENT_QUOTA");
+  }
+
   const supabase = getSupabaseServerClient();
   let source =
     memory.sources.find((item) => item.id === input.sourceId) ??
@@ -586,7 +699,6 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
     source = data?.[0] ? mapSourceFromSupabase(data[0]) : undefined;
   }
 
-  const targetDurationMinutes = normalizeDuration(input.targetDurationMinutes);
   const title = source
     ? input.outputLanguage === "zh"
       ? `用 ${targetDurationMinutes} 分钟听懂这份 ${source.title}`

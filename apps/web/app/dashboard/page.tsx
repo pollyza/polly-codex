@@ -43,6 +43,11 @@ export default async function DashboardPage() {
             <p className="muted" style={{ marginTop: 12 }}>
               {usage.minutesUsed.toFixed(1)} of {usage.freeMinutesTotal} minutes used this month.
             </p>
+            {usage.minutesRemaining < 8 ? (
+              <p className="muted" style={{ marginTop: 12, color: "#ba4a1f" }}>
+                You are running low on free minutes. Longer briefings may be blocked soon.
+              </p>
+            ) : null}
           </div>
         </section>
 

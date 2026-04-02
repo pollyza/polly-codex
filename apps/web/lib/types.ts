@@ -77,6 +77,17 @@ export type UsageSummary = {
   minutesRemaining: number;
 };
 
+export type UsageLedgerEntry = {
+  id: string;
+  userId: string;
+  jobId?: string | null;
+  entryType: "grant_monthly_free" | "consume_generation" | "adjustment";
+  minutesDelta: number;
+  note: string;
+  periodKey: string;
+  createdAt: string;
+};
+
 export type JobDetail = {
   job: JobRecord;
   source: SourceRecord;

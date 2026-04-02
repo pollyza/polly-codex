@@ -31,11 +31,27 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const job = await createJob({
-    sourceId: body.source_id,
-    outputLanguage: body.output_language ?? "zh",
-    targetDurationMinutes: Number(body.target_duration_minutes ?? 5)
-  }, user.id);
+  let job;
+  try {
+    job = await createJob({
+      sourceId: body.source_id,
+      outputLanguage: body.output_language ?? "zh",
+      targetDurationMinutes: Number(body.target_duration_minutes ?? 5)
+    }, user.id);
+  } catch (error) {
+    if (error instanceof Error && error.message === "INSUFFICIENT_QUOTA") {
+      return jsonWithCors(
+        {
+          error: {
+            code: "INSUFFICIENT_QUOTA",
+            message: "You do not have enough free minutes remaining."
+          }
+        },
+        { status: 402 }
+      );
+    }
+    throw error;
+  }
 
   return jsonWithCors({
     job: {

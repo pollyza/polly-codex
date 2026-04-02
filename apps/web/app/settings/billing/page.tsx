@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { SiteShell } from "@/components/site-shell";
 import { getCurrentUserFromCookies } from "@/lib/auth";
-import { getUsageSummary } from "@/lib/store";
+import { getUsageSummary, listUsageLedger } from "@/lib/store";
 
 export default async function BillingPage() {
   const user = await getCurrentUserFromCookies();
@@ -9,7 +9,7 @@ export default async function BillingPage() {
     redirect("/login?next=/settings/billing");
   }
 
-  const usage = await getUsageSummary(user.id);
+  const [usage, ledger] = await Promise.all([getUsageSummary(user.id), listUsageLedger(user.id)]);
 
   return (
     <SiteShell>
@@ -31,6 +31,33 @@ export default async function BillingPage() {
               <div className="metric">{usage.minutesRemaining.toFixed(1)}</div>
             </div>
           </div>
+        </div>
+        <div className="card">
+          <div className="eyebrow">Ledger</div>
+          <h2 className="title-lg">This month&apos;s minute movements.</h2>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Type</th>
+                <th>Minutes</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledger.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{new Date(entry.createdAt).toLocaleString()}</td>
+                  <td>{entry.entryType}</td>
+                  <td style={{ color: entry.minutesDelta < 0 ? "#ba4a1f" : "#1f7a5c" }}>
+                    {entry.minutesDelta > 0 ? "+" : ""}
+                    {entry.minutesDelta.toFixed(1)}
+                  </td>
+                  <td>{entry.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
     </SiteShell>

@@ -90,3 +90,78 @@ create table if not exists public.usage_ledger (
 );
 
 create index if not exists usage_ledger_user_period_idx on public.usage_ledger(user_id, period_key);
+
+alter table public.users enable row level security;
+alter table public.sources enable row level security;
+alter table public.jobs enable row level security;
+alter table public.scripts enable row level security;
+alter table public.audios enable row level security;
+alter table public.usage_ledger enable row level security;
+
+drop policy if exists "users_select_self" on public.users;
+create policy "users_select_self" on public.users
+for select using (auth.uid() = id);
+
+drop policy if exists "users_insert_self" on public.users;
+create policy "users_insert_self" on public.users
+for insert with check (auth.uid() = id);
+
+drop policy if exists "users_update_self" on public.users;
+create policy "users_update_self" on public.users
+for update using (auth.uid() = id);
+
+drop policy if exists "sources_owner_access" on public.sources;
+create policy "sources_owner_access" on public.sources
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "jobs_owner_access" on public.jobs;
+create policy "jobs_owner_access" on public.jobs
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "usage_owner_access" on public.usage_ledger;
+create policy "usage_owner_access" on public.usage_ledger
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "scripts_owner_select" on public.scripts;
+create policy "scripts_owner_select" on public.scripts
+for select using (
+  exists (
+    select 1
+    from public.jobs
+    where public.jobs.id = scripts.job_id
+      and public.jobs.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "scripts_owner_insert" on public.scripts;
+create policy "scripts_owner_insert" on public.scripts
+for insert with check (
+  exists (
+    select 1
+    from public.jobs
+    where public.jobs.id = scripts.job_id
+      and public.jobs.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "audios_owner_select" on public.audios;
+create policy "audios_owner_select" on public.audios
+for select using (
+  exists (
+    select 1
+    from public.jobs
+    where public.jobs.id = audios.job_id
+      and public.jobs.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "audios_owner_insert" on public.audios;
+create policy "audios_owner_insert" on public.audios
+for insert with check (
+  exists (
+    select 1
+    from public.jobs
+    where public.jobs.id = audios.job_id
+      and public.jobs.user_id = auth.uid()
+  )
+);
