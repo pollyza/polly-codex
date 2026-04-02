@@ -1,0 +1,85 @@
+export type SourceType = "feishu_doc" | "webpage";
+export type OutputLanguage = "zh" | "en";
+export type JobStatus =
+  | "queued"
+  | "extracting"
+  | "writing"
+  | "synthesizing"
+  | "succeeded"
+  | "failed";
+
+export type SourceRecord = {
+  id: string;
+  userId: string;
+  sourceType: SourceType;
+  sourceUrl: string;
+  domain: string;
+  title: string;
+  detectedLanguage: OutputLanguage;
+  rawHtml?: string | null;
+  rawText: string;
+  cleanedText?: string | null;
+  contentHash: string;
+  extractionMeta: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type JobRecord = {
+  id: string;
+  userId: string;
+  sourceId: string;
+  status: JobStatus;
+  outputLanguage: OutputLanguage;
+  targetDurationMinutes: 3 | 5 | 8;
+  scriptStyle: "host_explainer";
+  title: string;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+export type ScriptRecord = {
+  id: string;
+  jobId: string;
+  outputLanguage: OutputLanguage;
+  outlineJson: {
+    sections: string[];
+  };
+  scriptText: string;
+  wordCount: number;
+  llmProvider: string;
+  llmModel: string;
+  promptVersion: string;
+  createdAt: string;
+};
+
+export type AudioRecord = {
+  id: string;
+  jobId: string;
+  storagePath: string;
+  publicUrl: string;
+  format: "mp3";
+  durationSeconds: number;
+  sizeBytes: number;
+  ttsProvider: string;
+  ttsVoiceId: string;
+  createdAt: string;
+};
+
+export type UsageSummary = {
+  periodKey: string;
+  freeMinutesTotal: number;
+  minutesUsed: number;
+  minutesRemaining: number;
+};
+
+export type JobDetail = {
+  job: JobRecord;
+  source: SourceRecord;
+  script: ScriptRecord | null;
+  audio: AudioRecord | null;
+};

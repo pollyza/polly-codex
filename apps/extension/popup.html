@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Polly</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <section class="header">
+        <div class="eyebrow">Polly</div>
+        <h1>Turn this page into a spoken briefing</h1>
+        <p>Browser-first MVP for Feishu docs and web pages.</p>
+      </section>
+
+      <section class="card">
+        <div class="usage-row">
+          <span>Account</span>
+          <strong id="accountEmail">Not connected</strong>
+        </div>
+      </section>
+
+      <section class="card">
+        <label for="language">Output language</label>
+        <select id="language">
+          <option value="zh">Chinese</option>
+          <option value="en">English</option>
+        </select>
+
+        <label for="duration">Target duration</label>
+        <select id="duration">
+          <option value="3">3 minutes</option>
+          <option value="5" selected>5 minutes</option>
+          <option value="8">8 minutes</option>
+        </select>
+      </section>
+
+      <section class="card">
+        <div class="usage-row">
+          <span>Free minutes left</span>
+          <strong id="minutesRemaining">-</strong>
+        </div>
+        <div class="usage-bar"><span></span></div>
+      </section>
+
+      <section class="actions">
+        <button id="connectButton" class="secondary">Connect account</button>
+        <button id="generateButton">Generate podcast</button>
+      </section>
+
+      <p id="status" class="status">Ready to capture the current page.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+  </html>

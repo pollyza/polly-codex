@@ -1,0 +1,118 @@
+:root {
+  --bg: #f6f0e6;
+  --surface: rgba(255, 251, 245, 0.92);
+  --line: rgba(23, 20, 17, 0.1);
+  --text: #1f1d1a;
+  --muted: #72675b;
+  --accent: #ba4a1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 360px;
+  background:
+    radial-gradient(circle at top left, rgba(186, 74, 31, 0.15), transparent 32%),
+    linear-gradient(180deg, #faf4eb 0%, var(--bg) 100%);
+  color: var(--text);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.header h1 {
+  margin: 6px 0 8px;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.header p,
+.status {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.eyebrow {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+}
+
+label {
+  font-size: 13px;
+}
+
+select,
+button {
+  font: inherit;
+}
+
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fffbf5;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+button {
+  appearance: none;
+  border: 0;
+  padding: 12px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.usage-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(23, 20, 17, 0.08);
+  overflow: hidden;
+}
+
+.usage-bar span {
+  display: block;
+  width: 31%;
+  height: 100%;
+  background: linear-gradient(90deg, #ba4a1f, #e18859);
+}
