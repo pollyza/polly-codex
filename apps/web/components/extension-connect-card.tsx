@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Props = {
   state: string;
@@ -12,6 +12,7 @@ type BridgeStatus = "idle" | "connecting" | "connected" | "error";
 export function ExtensionConnectCard({ state, userEmail }: Props) {
   const [status, setStatus] = useState<BridgeStatus>("idle");
   const [message, setMessage] = useState("Click below to connect this browser to Polly.");
+  const attemptedRef = useRef(false);
 
   const helper = useMemo(() => {
     if (status === "connected") {
@@ -53,6 +54,15 @@ export function ExtensionConnectCard({ state, userEmail }: Props) {
       setMessage(error instanceof Error ? error.message : "Failed to connect extension.");
     }
   }
+
+  useEffect(() => {
+    if (!state || attemptedRef.current || status !== "idle") {
+      return;
+    }
+
+    attemptedRef.current = true;
+    void handleConnect();
+  }, [state, status]);
 
   return (
     <section className="card" style={{ maxWidth: 680, margin: "80px auto 0" }}>

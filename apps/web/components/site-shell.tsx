@@ -27,9 +27,9 @@ export async function SiteShell({ children }: { children: ReactNode }) {
               <LogoutButton />
             </div>
           ) : (
-            <Link href="/login" className="button secondary">
-              Log in
-            </Link>
+            <span className="muted" style={{ fontSize: 14 }}>
+              3 free runs, then BYO key
+            </span>
           )}
         </div>
       </header>

@@ -1,16 +1,16 @@
 import { NextRequest } from "next/server";
 import { jsonWithCors, optionsWithCors } from "@/lib/api";
-import { getCurrentUserFromRequest } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromRequest, getDeviceIdFromRequest } from "@/lib/auth";
 import { createSource } from "@/lib/store";
 
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUserFromRequest(request);
+  const user = (await getCurrentUserFromRequest(request)) || (getDeviceIdFromRequest(request) ? createDeviceUser(getDeviceIdFromRequest(request)!) : null);
   if (!user) {
     return jsonWithCors(
       {
         error: {
           code: "UNAUTHORIZED",
-          message: "Authentication required."
+          message: "Device id is required."
         }
       },
       { status: 401 }
@@ -25,6 +25,18 @@ export async function POST(request: NextRequest) {
         error: {
           code: "INVALID_INPUT",
           message: "raw_text is required"
+        }
+      },
+      { status: 400 }
+    );
+  }
+
+  if (body.raw_text.trim().length < 180) {
+    return jsonWithCors(
+      {
+        error: {
+          code: "SOURCE_TOO_SHORT",
+          message: "The captured page does not contain enough body text."
         }
       },
       { status: 400 }

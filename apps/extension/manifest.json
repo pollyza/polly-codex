@@ -20,7 +20,9 @@
   "content_scripts": [
     {
       "matches": [
-        "http://localhost:3000/*"
+        "http://localhost:3000/*",
+        "https://web-pollyzas-projects.vercel.app/*",
+        "https://web-rose-three-88.vercel.app/*"
       ],
       "js": [
         "content-script.js"

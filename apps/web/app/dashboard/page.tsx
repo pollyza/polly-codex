@@ -1,16 +1,12 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { SiteShell } from "@/components/site-shell";
 import { getCurrentUserFromCookies } from "@/lib/auth";
 import { getUsageSummary, listJobSummaries } from "@/lib/store";
 
 export default async function DashboardPage() {
   const user = await getCurrentUserFromCookies();
-  if (!user) {
-    redirect("/login?next=/dashboard");
-  }
 
-  const [jobs, usage] = await Promise.all([listJobSummaries(user.id), getUsageSummary(user.id)]);
+  const [jobs, usage] = await Promise.all([listJobSummaries(user?.id), getUsageSummary(user?.id)]);
 
   return (
     <SiteShell>
@@ -34,18 +30,18 @@ export default async function DashboardPage() {
           </div>
 
           <div className="card">
-            <div className="eyebrow">Free usage</div>
-            <div className="metric">{usage.minutesRemaining.toFixed(1)} min</div>
+            <div className="eyebrow">Free trial</div>
+            <div className="metric">{usage.trialRunsRemaining}</div>
             <p className="muted">Remaining in {usage.periodKey}</p>
             <div className="progress" style={{ marginTop: 18 }}>
-              <span style={{ width: `${(usage.minutesUsed / usage.freeMinutesTotal) * 100}%` }} />
+              <span style={{ width: `${(usage.trialRunsUsed / usage.freeTrialRunsTotal) * 100}%` }} />
             </div>
             <p className="muted" style={{ marginTop: 12 }}>
-              {usage.minutesUsed.toFixed(1)} of {usage.freeMinutesTotal} minutes used this month.
+              {usage.trialRunsUsed} of {usage.freeTrialRunsTotal} free runs used on this device.
             </p>
-            {usage.minutesRemaining < 8 ? (
+            {usage.trialRunsRemaining < 1 ? (
               <p className="muted" style={{ marginTop: 12, color: "#ba4a1f" }}>
-                You are running low on free minutes. Longer briefings may be blocked soon.
+                Free trial is used up. Add your own OpenAI or Gemini API key in the extension to continue.
               </p>
             ) : null}
           </div>

@@ -1,16 +1,16 @@
 import { NextRequest } from "next/server";
 import { jsonWithCors, optionsWithCors } from "@/lib/api";
-import { getCurrentUserFromRequest } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromRequest, getDeviceIdFromRequest } from "@/lib/auth";
 import { getUsageSummary } from "@/lib/store";
 
 export async function GET(request: NextRequest) {
-  const user = await getCurrentUserFromRequest(request);
+  const user = (await getCurrentUserFromRequest(request)) || (getDeviceIdFromRequest(request) ? createDeviceUser(getDeviceIdFromRequest(request)!) : null);
   if (!user) {
     return jsonWithCors(
       {
         error: {
           code: "UNAUTHORIZED",
-          message: "Authentication required."
+          message: "Device id is required."
         }
       },
       { status: 401 }
@@ -23,15 +23,13 @@ export async function GET(request: NextRequest) {
     user: {
       id: user.id,
       email: user.email,
-      name: user.name,
-      default_output_language: "zh",
-      default_duration_minutes: 5
+      name: user.name
     },
     usage: {
       period_key: usage.periodKey,
-      free_minutes_total: usage.freeMinutesTotal,
-      minutes_used: usage.minutesUsed,
-      minutes_remaining: usage.minutesRemaining
+      free_trial_runs_total: usage.freeTrialRunsTotal,
+      trial_runs_used: usage.trialRunsUsed,
+      trial_runs_remaining: usage.trialRunsRemaining
     }
   });
 }

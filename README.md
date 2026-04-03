@@ -58,12 +58,16 @@ cp apps/web/.env.example apps/web/.env.local
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SECRET_KEY`
 - `OPENAI_API_KEY`
 - `OPENAI_TEXT_MODEL`
 - `OPENAI_TTS_MODEL`
 
-当 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 同时存在时，登录页会自动切到 Supabase magic link。否则继续走本地 fallback 登录。
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` 和 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 二选一即可，`SUPABASE_SERVICE_ROLE_KEY` 和 `SUPABASE_SECRET_KEY` 也二选一即可。
+
+当 `NEXT_PUBLIC_SUPABASE_URL` 和前端 public/publishable key 同时存在时，登录页会自动切到 Supabase magic link。否则继续走本地 fallback 登录。
 
 数据库初始化 SQL 在：
 

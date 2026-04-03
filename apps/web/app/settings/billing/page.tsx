@@ -1,46 +1,42 @@
-import { redirect } from "next/navigation";
 import { SiteShell } from "@/components/site-shell";
 import { getCurrentUserFromCookies } from "@/lib/auth";
 import { getUsageSummary, listUsageLedger } from "@/lib/store";
 
 export default async function BillingPage() {
   const user = await getCurrentUserFromCookies();
-  if (!user) {
-    redirect("/login?next=/settings/billing");
-  }
 
-  const [usage, ledger] = await Promise.all([getUsageSummary(user.id), listUsageLedger(user.id)]);
+  const [usage, ledger] = await Promise.all([getUsageSummary(user?.id), listUsageLedger(user?.id)]);
 
   return (
     <SiteShell>
       <section className="grid">
         <div className="card">
           <div className="eyebrow">Usage</div>
-          <h1 className="title-lg">Free audio minutes are the primary product limit in MVP.</h1>
+          <h1 className="title-lg">Three free runs, then bring your own model API key.</h1>
           <div className="kpi-row">
             <div className="card" style={{ padding: 18 }}>
               <div className="muted">Total</div>
-              <div className="metric">{usage.freeMinutesTotal}</div>
+              <div className="metric">{usage.freeTrialRunsTotal}</div>
             </div>
             <div className="card" style={{ padding: 18 }}>
               <div className="muted">Used</div>
-              <div className="metric">{usage.minutesUsed.toFixed(1)}</div>
+              <div className="metric">{usage.trialRunsUsed}</div>
             </div>
             <div className="card" style={{ padding: 18 }}>
               <div className="muted">Remaining</div>
-              <div className="metric">{usage.minutesRemaining.toFixed(1)}</div>
+              <div className="metric">{usage.trialRunsRemaining}</div>
             </div>
           </div>
         </div>
         <div className="card">
           <div className="eyebrow">Ledger</div>
-          <h2 className="title-lg">This month&apos;s minute movements.</h2>
+          <h2 className="title-lg">This device&apos;s trial and generation history.</h2>
           <table className="table">
             <thead>
               <tr>
                 <th>When</th>
                 <th>Type</th>
-                <th>Minutes</th>
+                <th>Runs</th>
                 <th>Note</th>
               </tr>
             </thead>

@@ -1,21 +1,20 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { JobAutoRefresh } from "@/components/job-auto-refresh";
 import { SiteShell } from "@/components/site-shell";
-import { getCurrentUserFromCookies } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromCookies } from "@/lib/auth";
 import { getJobDetail } from "@/lib/store";
 
 export default async function JobDetailPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ device_id?: string }>;
 }) {
-  const user = await getCurrentUserFromCookies();
-  if (!user) {
-    redirect(`/login?next=${encodeURIComponent(`/jobs/${(await params).id}`)}`);
-  }
   const { id } = await params;
-  const detail = await getJobDetail(id, user.id);
+  const search = await searchParams;
+  const user = (await getCurrentUserFromCookies()) || (search.device_id ? createDeviceUser(search.device_id) : null);
+  const detail = await getJobDetail(id, user?.id);
 
   if (!detail) {
     return (
@@ -59,6 +58,11 @@ export default async function JobDetailPage({
                 <div className="muted">
                   Duration: {audio?.durationSeconds ?? 0} sec
                 </div>
+                {job.errorCode === "STORAGE_FALLBACK" ? (
+                  <p className="muted" style={{ color: "#b7791f", margin: "8px 0 0" }}>
+                    Storage upload fell back to an inline audio URL. Playback works, but persistence is degraded.
+                  </p>
+                ) : null}
                 {audio?.publicUrl ? (
                   <audio controls src={audio.publicUrl} style={{ width: "100%" }}>
                     Your browser does not support audio playback.
@@ -79,8 +83,9 @@ export default async function JobDetailPage({
                   <span>{job.status}</span>
                 </div>
                 <p className="muted" style={{ marginTop: 12 }}>
-                  The job is still moving through extraction, writing, and synthesis. This page is
-                  where we will later attach polling and realtime status updates.
+                  {job.status === "failed"
+                    ? job.errorMessage || "The generation failed before audio was produced."
+                    : "The job is still moving through extraction, writing, and synthesis. This page will keep refreshing automatically."}
                 </p>
               </>
             )}

@@ -1,16 +1,12 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { SiteShell } from "@/components/site-shell";
 import { getCurrentUserFromCookies } from "@/lib/auth";
 import { listJobSummaries } from "@/lib/store";
 
 export default async function HistoryPage() {
   const user = await getCurrentUserFromCookies();
-  if (!user) {
-    redirect("/login?next=/history");
-  }
 
-  const jobs = await listJobSummaries(user.id);
+  const jobs = await listJobSummaries(user?.id);
 
   return (
     <SiteShell>

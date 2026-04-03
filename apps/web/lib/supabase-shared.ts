@@ -7,7 +7,11 @@ export function getSupabaseUrl() {
 }
 
 export function getSupabaseAnonKey() {
-  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+}
+
+export function getSupabaseServiceKey() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
 }
 
 export function hasSupabaseAuthConfig() {
@@ -16,7 +20,7 @@ export function hasSupabaseAuthConfig() {
 
 export function getSupabaseServerClient() {
   const url = getSupabaseUrl();
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = getSupabaseServiceKey();
 
   if (!url || !key) {
     return null;

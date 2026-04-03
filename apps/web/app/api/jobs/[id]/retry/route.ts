@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { jsonWithCors, optionsWithCors } from "@/lib/api";
-import { getCurrentUserFromRequest } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromRequest, getDeviceIdFromRequest } from "@/lib/auth";
 import { retryJob } from "@/lib/store";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUserFromRequest(request);
+  const user = (await getCurrentUserFromRequest(request)) || (getDeviceIdFromRequest(request) ? createDeviceUser(getDeviceIdFromRequest(request)!) : null);
   if (!user) {
     return jsonWithCors(
       {

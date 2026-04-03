@@ -5,6 +5,7 @@ import { hasSupabaseAuthConfig } from "@/lib/supabase-shared";
 import { getSupabaseRouteHandlerClient, getSupabaseServerComponentClient } from "@/lib/supabase-server";
 
 export const SESSION_COOKIE_NAME = "polly_session";
+export const DEVICE_HEADER_NAME = "x-polly-device-id";
 
 export type AuthUser = {
   id: string;
@@ -74,6 +75,11 @@ export function createAuthUser(email: string) {
     email: normalizedEmail,
     name
   } satisfies AuthUser;
+}
+
+export function createDeviceUser(deviceId: string) {
+  const normalized = deviceId.trim().toLowerCase();
+  return createAuthUser(`device+${normalized}@polly.local`);
 }
 
 export function createWebSessionToken(user: AuthUser) {
@@ -167,4 +173,8 @@ export async function getCurrentUserFromRequest(request: NextRequest) {
 
   const payload = verifyToken(cookieToken);
   return payload ? mapPayloadToUser(payload) : null;
+}
+
+export function getDeviceIdFromRequest(request: NextRequest) {
+  return request.headers.get(DEVICE_HEADER_NAME)?.trim() || null;
 }

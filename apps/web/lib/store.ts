@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { buildContentHash, buildHostScript, buildSummary, cleanText, detectLanguage, deriveDomain, deriveSourceType, estimateAudioDurationSeconds } from "@/lib/content";
-import { generatePodcastAssets, hasOpenAIConfig, synthesizeSpeech } from "@/lib/openai";
+import { generatePodcastAssets, hasProviderConfig, synthesizeSpeech } from "@/lib/openai";
 import { seededAudios, seededJobs, seededScripts, seededSources, seededUsage, DEMO_USER_ID } from "@/lib/seed-data";
 import { getSupabaseServerClient } from "@/lib/supabase-shared";
-import type { AudioRecord, JobDetail, JobRecord, OutputLanguage, ScriptRecord, SourceRecord, SourceType, UsageLedgerEntry, UsageSummary } from "@/lib/types";
+import type { AudioRecord, AuthMode, JobDetail, JobRecord, ModelProvider, OutputLanguage, ScriptRecord, SourceRecord, SourceType, UsageLedgerEntry, UsageSummary } from "@/lib/types";
 
 const memory = {
   sources: [...seededSources],
@@ -13,7 +13,9 @@ const memory = {
   usage: { ...seededUsage }
 };
 const runningJobs = new Set<string>();
-const MONTHLY_FREE_MINUTES = 60;
+const FREE_TRIAL_RUNS = 3;
+const MAX_INLINE_AUDIO_BYTES = 4_000_000;
+const jobSecrets = new Map<string, { provider: ModelProvider; apiKey?: string | null; authMode: AuthMode }>();
 
 function nowIso() {
   return new Date().toISOString();
@@ -28,6 +30,10 @@ function getCurrentPeriodKey() {
 
 function normalizeDuration(value: number): 3 | 5 | 8 {
   return value === 3 || value === 5 || value === 8 ? value : 5;
+}
+
+function normalizeProvider(value: string | undefined): ModelProvider {
+  return value === "gemini" ? "gemini" : "openai";
 }
 
 function evolveJob(job: JobRecord): JobRecord {
@@ -183,6 +189,7 @@ async function saveAudio(audio: AudioRecord, buffer?: Buffer) {
     const bucket = process.env.SUPABASE_AUDIO_BUCKET;
     let publicUrl = audio.publicUrl;
     let storagePath = audio.storagePath;
+    let uploadErrorMessage: string | null = null;
 
     if (buffer && bucket) {
       const { error: uploadError } = await supabase.storage.from(bucket).upload(storagePath, buffer, {
@@ -191,6 +198,8 @@ async function saveAudio(audio: AudioRecord, buffer?: Buffer) {
       });
       if (!uploadError) {
         publicUrl = supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+      } else {
+        uploadErrorMessage = uploadError.message;
       }
     }
 
@@ -209,96 +218,39 @@ async function saveAudio(audio: AudioRecord, buffer?: Buffer) {
     if (error) {
       throw error;
     }
-    return;
+    return {
+      publicUrl,
+      uploadErrorMessage
+    };
   }
 
   memory.audios.unshift(audio);
+  return {
+    publicUrl: audio.publicUrl,
+    uploadErrorMessage: null
+  };
 }
 
 async function consumeUsage(userId: string, jobId: string, minutes: number) {
+  void minutes;
   const supabase = getSupabaseServerClient();
   if (supabase) {
-    await ensureMonthlyGrant(userId);
-    const { error } = await supabase.from("usage_ledger").insert({
-      user_id: userId,
-      job_id: jobId,
-      entry_type: "consume_generation",
-      minutes_delta: -minutes,
-      note: "Generated audio briefing",
-      period_key: getCurrentPeriodKey()
-    });
-    if (error) {
-      throw error;
-    }
     return;
   }
 
-  memory.usage.minutesUsed += minutes;
-  memory.usage.minutesRemaining = Math.max(0, memory.usage.freeMinutesTotal - memory.usage.minutesUsed);
+  memory.usage.trialRunsUsed += 1;
+  memory.usage.trialRunsRemaining = Math.max(0, FREE_TRIAL_RUNS - memory.usage.trialRunsUsed);
 }
 
 async function ensureMonthlyGrant(userId: string) {
-  const supabase = getSupabaseServerClient();
-  const periodKey = getCurrentPeriodKey();
-
-  if (supabase) {
-    const { data, error } = await supabase
-      .from("usage_ledger")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("period_key", periodKey)
-      .eq("entry_type", "grant_monthly_free")
-      .limit(1);
-    if (error) {
-      throw error;
-    }
-
-    if (!data || data.length === 0) {
-      const { error: insertError } = await supabase.from("usage_ledger").insert({
-        user_id: userId,
-        entry_type: "grant_monthly_free",
-        minutes_delta: MONTHLY_FREE_MINUTES,
-        note: "Monthly free allowance",
-        period_key: periodKey
-      });
-      if (insertError) {
-        throw insertError;
-      }
-    }
-    return;
-  }
-
-  memory.usage.periodKey = periodKey;
-  memory.usage.freeMinutesTotal = MONTHLY_FREE_MINUTES;
-  memory.usage.minutesRemaining = Math.max(0, memory.usage.freeMinutesTotal - memory.usage.minutesUsed);
+  void userId;
+  memory.usage.periodKey = getCurrentPeriodKey();
+  memory.usage.freeTrialRunsTotal = FREE_TRIAL_RUNS;
+  memory.usage.trialRunsRemaining = Math.max(0, memory.usage.freeTrialRunsTotal - memory.usage.trialRunsUsed);
 }
 
 export async function listUsageLedger(userId = DEMO_USER_ID): Promise<UsageLedgerEntry[]> {
-  const supabase = getSupabaseServerClient();
   const periodKey = getCurrentPeriodKey();
-
-  if (supabase) {
-    await ensureMonthlyGrant(userId);
-    const { data, error } = await supabase
-      .from("usage_ledger")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("period_key", periodKey)
-      .order("created_at", { ascending: false });
-    if (error) {
-      throw error;
-    }
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      userId: String(row.user_id),
-      jobId: (row.job_id as string | null) ?? null,
-      entryType: row.entry_type as UsageLedgerEntry["entryType"],
-      minutesDelta: Number(row.minutes_delta),
-      note: String(row.note ?? ""),
-      periodKey: String(row.period_key),
-      createdAt: String(row.created_at)
-    }));
-  }
 
   await ensureMonthlyGrant(userId);
   return [
@@ -307,8 +259,8 @@ export async function listUsageLedger(userId = DEMO_USER_ID): Promise<UsageLedge
       userId,
       jobId: null,
       entryType: "grant_monthly_free",
-      minutesDelta: MONTHLY_FREE_MINUTES,
-      note: "Monthly free allowance",
+      minutesDelta: FREE_TRIAL_RUNS,
+      note: "Starter trial runs",
       periodKey,
       createdAt: new Date(`${periodKey}-01T00:00:00Z`).toISOString()
     },
@@ -319,8 +271,8 @@ export async function listUsageLedger(userId = DEMO_USER_ID): Promise<UsageLedge
         userId,
         jobId: job.id,
         entryType: "consume_generation" as const,
-        minutesDelta: -job.targetDurationMinutes,
-        note: job.title,
+        minutesDelta: -1,
+        note: `${job.provider} ${job.authMode === "trial" ? "trial" : "BYO key"} generation`,
         periodKey,
         createdAt: job.finishedAt ?? job.updatedAt
       }))
@@ -330,10 +282,14 @@ export async function listUsageLedger(userId = DEMO_USER_ID): Promise<UsageLedge
 
 async function getMinutesRemaining(userId: string) {
   const usage = await getUsageSummary(userId);
-  return usage.minutesRemaining;
+  return usage.trialRunsRemaining;
 }
 
-async function runJob(jobId: string, userId = DEMO_USER_ID) {
+async function runJob(
+  jobId: string,
+  userId = DEMO_USER_ID,
+  generationOptions?: { provider?: ModelProvider; apiKey?: string | null; authMode?: AuthMode }
+) {
   if (runningJobs.has(jobId)) {
     return;
   }
@@ -346,19 +302,28 @@ async function runJob(jobId: string, userId = DEMO_USER_ID) {
     }
 
     const sourceText = detail.source.cleanedText ?? detail.source.rawText;
+    const secrets = generationOptions ?? jobSecrets.get(jobId) ?? {
+      provider: detail.job.provider,
+      apiKey: null,
+      authMode: detail.job.authMode
+    };
+    const provider = normalizeProvider(secrets.provider);
+    const authMode = secrets.authMode ?? detail.job.authMode;
 
     await setJobStatus(jobId, "extracting");
 
     let script: ScriptRecord;
     let audio: AudioRecord;
 
-    if (hasOpenAIConfig()) {
+    if (hasProviderConfig(provider, secrets.apiKey)) {
       await setJobStatus(jobId, "writing");
       const generated = await generatePodcastAssets({
         sourceTitle: detail.source.title,
         cleanedText: sourceText,
         outputLanguage: detail.job.outputLanguage,
-        targetDurationMinutes: detail.job.targetDurationMinutes
+        targetDurationMinutes: detail.job.targetDurationMinutes,
+        provider,
+        apiKeyOverride: secrets.apiKey
       });
 
       script = {
@@ -385,26 +350,37 @@ async function runJob(jobId: string, userId = DEMO_USER_ID) {
 
       const speech = await synthesizeSpeech({
         text: generated.scriptText,
-        outputLanguage: detail.job.outputLanguage
+        outputLanguage: detail.job.outputLanguage,
+        provider,
+        apiKeyOverride: secrets.apiKey
       });
+      if (speech.buffer.byteLength > MAX_INLINE_AUDIO_BYTES && !process.env.SUPABASE_AUDIO_BUCKET) {
+        throw new Error("Generated audio is too large for inline fallback. Configure Supabase Storage.");
+      }
       const dataUrl = `data:${speech.contentType};base64,${speech.buffer.toString("base64")}`;
       audio = {
         id: randomUUID(),
         jobId,
         storagePath: `audio/${jobId}.mp3`,
         publicUrl: dataUrl,
-        format: "mp3",
+        format: speech.contentType === "audio/wav" ? "wav" : "mp3",
         durationSeconds: estimateAudioDurationSeconds(detail.job.targetDurationMinutes),
         sizeBytes: speech.buffer.byteLength,
-        ttsProvider: "openai",
+        ttsProvider: provider,
         ttsVoiceId: speech.voice,
         createdAt: nowIso()
       };
-      await saveAudio(audio, speech.buffer);
-      await consumeUsage(userId, jobId, detail.job.targetDurationMinutes);
+      const audioResult = await saveAudio(audio, speech.buffer);
+      if (authMode === "trial") {
+        await consumeUsage(userId, jobId, detail.job.targetDurationMinutes);
+      }
       await setJobStatus(jobId, "succeeded", {
         title: generated.title,
         summary: generated.summary,
+        errorCode: audioResult.uploadErrorMessage ? "STORAGE_FALLBACK" : null,
+        errorMessage: audioResult.uploadErrorMessage
+          ? `Audio uploaded with data URL fallback because storage upload failed: ${audioResult.uploadErrorMessage}`
+          : null,
         finishedAt: nowIso()
       });
       return;
@@ -456,11 +432,23 @@ async function runJob(jobId: string, userId = DEMO_USER_ID) {
     });
   } finally {
     runningJobs.delete(jobId);
+    jobSecrets.delete(jobId);
   }
 }
 
-function triggerJob(jobId: string, userId = DEMO_USER_ID) {
-  void runJob(jobId, userId);
+function triggerJob(
+  jobId: string,
+  userId = DEMO_USER_ID,
+  generationOptions?: { provider?: ModelProvider; apiKey?: string | null; authMode?: AuthMode }
+) {
+  if (generationOptions) {
+    jobSecrets.set(jobId, {
+      provider: normalizeProvider(generationOptions.provider),
+      apiKey: generationOptions.apiKey,
+      authMode: generationOptions.authMode ?? "trial"
+    });
+  }
+  void runJob(jobId, userId, generationOptions);
 }
 
 function usageFromMemory(): UsageSummary {
@@ -494,6 +482,21 @@ function createSilentWavDataUrl() {
   return `data:audio/wav;base64,${buffer.toString("base64")}`;
 }
 
+async function ensureSupabaseUser(userId: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return;
+  }
+
+  await supabase.from("users").upsert({
+    id: userId,
+    email: `${userId}@polly.local`,
+    name: "Polly device",
+    created_at: nowIso(),
+    updated_at: nowIso()
+  });
+}
+
 type CreateSourceInput = {
   sourceType?: SourceType;
   sourceUrl: string;
@@ -507,9 +510,13 @@ type CreateJobInput = {
   sourceId: string;
   outputLanguage: OutputLanguage;
   targetDurationMinutes: number;
+  authMode?: AuthMode;
+  provider?: ModelProvider;
+  apiKey?: string | null;
 };
 
 export async function listJobs(userId = DEMO_USER_ID) {
+  userId = userId || DEMO_USER_ID;
   const supabase = getSupabaseServerClient();
   if (supabase) {
     const { data, error } = await supabase
@@ -534,6 +541,7 @@ export async function listJobs(userId = DEMO_USER_ID) {
 }
 
 export async function listJobSummaries(userId = DEMO_USER_ID) {
+  userId = userId || DEMO_USER_ID;
   const jobs = await listJobs(userId);
   const details = await Promise.all(jobs.map((job) => getJobDetail(job.id, userId)));
 
@@ -549,32 +557,13 @@ export async function listJobSummaries(userId = DEMO_USER_ID) {
 }
 
 export async function getUsageSummary(userId = DEMO_USER_ID) {
-  const supabase = getSupabaseServerClient();
-  if (supabase) {
-    const periodKey = getCurrentPeriodKey();
-    await ensureMonthlyGrant(userId);
-    const { data, error } = await supabase
-      .from("usage_ledger")
-      .select("minutes_delta")
-      .eq("user_id", userId)
-      .eq("period_key", periodKey);
-    if (error) {
-      throw error;
-    }
-    const balance = (data ?? []).reduce((sum, row) => sum + Number(row.minutes_delta), 0);
-    return {
-      periodKey,
-      freeMinutesTotal: MONTHLY_FREE_MINUTES,
-      minutesUsed: Math.max(0, MONTHLY_FREE_MINUTES - balance),
-      minutesRemaining: Math.max(0, balance)
-    };
-  }
-
+  userId = userId || DEMO_USER_ID;
   await ensureMonthlyGrant(userId);
   return usageFromMemory();
 }
 
 export async function getJobDetail(jobId: string, userId = DEMO_USER_ID): Promise<JobDetail | null> {
+  userId = userId || DEMO_USER_ID;
   const supabase = getSupabaseServerClient();
   if (supabase) {
     const { data: jobs, error } = await supabase
@@ -611,7 +600,7 @@ export async function getJobDetail(jobId: string, userId = DEMO_USER_ID): Promis
   if (!job) {
     return null;
   }
-  const evolved = hasOpenAIConfig() ? job : evolveJob(job);
+  const evolved = job;
   const source = memory.sources.find((item) => item.id === evolved.sourceId);
   if (!source) {
     return null;
@@ -649,6 +638,7 @@ export async function createSource(input: CreateSourceInput, userId = DEMO_USER_
 
   const supabase = getSupabaseServerClient();
   if (supabase) {
+    await ensureSupabaseUser(userId);
     const { error } = await supabase.from("sources").insert({
       id: source.id,
       user_id: source.userId,
@@ -676,10 +666,8 @@ export async function createSource(input: CreateSourceInput, userId = DEMO_USER_
 
 export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
   const targetDurationMinutes = normalizeDuration(input.targetDurationMinutes);
-  const remaining = await getMinutesRemaining(userId);
-  if (remaining < targetDurationMinutes) {
-    throw new Error("INSUFFICIENT_QUOTA");
-  }
+  const authMode = input.authMode ?? "trial";
+  const provider = normalizeProvider(input.provider);
 
   const supabase = getSupabaseServerClient();
   let source =
@@ -710,6 +698,8 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
     id: randomUUID(),
     userId,
     sourceId: input.sourceId,
+    authMode,
+    provider,
     status: "queued",
     outputLanguage: input.outputLanguage,
     targetDurationMinutes,
@@ -725,6 +715,7 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
   };
 
   if (supabase) {
+    await ensureSupabaseUser(userId);
     const { error } = await supabase.from("jobs").insert({
       id: job.id,
       user_id: job.userId,
@@ -742,12 +733,20 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
     if (error) {
       throw error;
     }
-    triggerJob(job.id, userId);
+    triggerJob(job.id, userId, {
+      provider,
+      apiKey: input.apiKey,
+      authMode
+    });
     return job;
   }
 
   memory.jobs.unshift(job);
-  triggerJob(job.id, userId);
+  triggerJob(job.id, userId, {
+    provider,
+    apiKey: input.apiKey,
+    authMode
+  });
   return job;
 }
 
@@ -787,6 +786,8 @@ function mapJobFromSupabase(row: Record<string, unknown>): JobRecord {
     id: String(row.id),
     userId: String(row.user_id),
     sourceId: String(row.source_id),
+    authMode: "trial",
+    provider: "openai",
     status: row.status as JobRecord["status"],
     outputLanguage: row.output_language as OutputLanguage,
     targetDurationMinutes: Number(row.target_duration_minutes) as 3 | 5 | 8,
@@ -823,7 +824,7 @@ function mapAudioFromSupabase(row: Record<string, unknown>): AudioRecord {
     jobId: String(row.job_id),
     storagePath: String(row.storage_path ?? ""),
     publicUrl: String(row.public_url ?? ""),
-    format: "mp3",
+    format: String(row.format ?? "mp3"),
     durationSeconds: Number(row.duration_seconds ?? 0),
     sizeBytes: Number(row.size_bytes ?? 0),
     ttsProvider: String(row.tts_provider ?? "unknown"),

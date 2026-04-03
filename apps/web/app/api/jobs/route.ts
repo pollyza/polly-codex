@@ -1,16 +1,16 @@
 import { NextRequest } from "next/server";
 import { jsonWithCors, optionsWithCors } from "@/lib/api";
-import { getCurrentUserFromRequest } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromRequest, getDeviceIdFromRequest } from "@/lib/auth";
 import { createJob } from "@/lib/store";
 
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUserFromRequest(request);
+  const user = (await getCurrentUserFromRequest(request)) || (getDeviceIdFromRequest(request) ? createDeviceUser(getDeviceIdFromRequest(request)!) : null);
   if (!user) {
     return jsonWithCors(
       {
         error: {
           code: "UNAUTHORIZED",
-          message: "Authentication required."
+          message: "Device id is required."
         }
       },
       { status: 401 }
@@ -36,7 +36,10 @@ export async function POST(request: NextRequest) {
     job = await createJob({
       sourceId: body.source_id,
       outputLanguage: body.output_language ?? "zh",
-      targetDurationMinutes: Number(body.target_duration_minutes ?? 5)
+      targetDurationMinutes: Number(body.target_duration_minutes ?? 5),
+      authMode: body.auth_mode === "byo_key" ? "byo_key" : "trial",
+      provider: body.provider === "gemini" ? "gemini" : "openai",
+      apiKey: typeof body.user_api_key === "string" ? body.user_api_key : null
     }, user.id);
   } catch (error) {
     if (error instanceof Error && error.message === "INSUFFICIENT_QUOTA") {
@@ -56,6 +59,8 @@ export async function POST(request: NextRequest) {
   return jsonWithCors({
     job: {
       id: job.id,
+      auth_mode: job.authMode,
+      provider: job.provider,
       status: job.status,
       output_language: job.outputLanguage,
       target_duration_minutes: job.targetDurationMinutes,

@@ -4,9 +4,9 @@ export const DEMO_USER_ID = "user_demo_01";
 
 export const seededUsage: UsageSummary = {
   periodKey: "2026-04",
-  freeMinutesTotal: 60,
-  minutesUsed: 18.5,
-  minutesRemaining: 41.5
+  freeTrialRunsTotal: 3,
+  trialRunsUsed: 1,
+  trialRunsRemaining: 2
 };
 
 export const seededSources: SourceRecord[] = [
@@ -51,6 +51,8 @@ export const seededJobs: JobRecord[] = [
     id: "job_demo_q2_growth",
     userId: DEMO_USER_ID,
     sourceId: "source_demo_q2_growth",
+    authMode: "trial",
+    provider: "openai",
     status: "succeeded",
     outputLanguage: "zh",
     targetDurationMinutes: 5,
@@ -66,6 +68,8 @@ export const seededJobs: JobRecord[] = [
     id: "job_demo_competitor",
     userId: DEMO_USER_ID,
     sourceId: "source_demo_competitor",
+    authMode: "trial",
+    provider: "openai",
     status: "writing",
     outputLanguage: "en",
     targetDurationMinutes: 8,

@@ -1,5 +1,7 @@
 export type SourceType = "feishu_doc" | "webpage";
 export type OutputLanguage = "zh" | "en";
+export type ModelProvider = "openai" | "gemini";
+export type AuthMode = "trial" | "byo_key";
 export type JobStatus =
   | "queued"
   | "extracting"
@@ -28,6 +30,8 @@ export type JobRecord = {
   id: string;
   userId: string;
   sourceId: string;
+  authMode: AuthMode;
+  provider: ModelProvider;
   status: JobStatus;
   outputLanguage: OutputLanguage;
   targetDurationMinutes: 3 | 5 | 8;
@@ -62,7 +66,7 @@ export type AudioRecord = {
   jobId: string;
   storagePath: string;
   publicUrl: string;
-  format: "mp3";
+  format: string;
   durationSeconds: number;
   sizeBytes: number;
   ttsProvider: string;
@@ -72,9 +76,9 @@ export type AudioRecord = {
 
 export type UsageSummary = {
   periodKey: string;
-  freeMinutesTotal: number;
-  minutesUsed: number;
-  minutesRemaining: number;
+  freeTrialRunsTotal: number;
+  trialRunsUsed: number;
+  trialRunsRemaining: number;
 };
 
 export type UsageLedgerEntry = {

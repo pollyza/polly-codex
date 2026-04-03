@@ -23,7 +23,36 @@ export function deriveSourceType(sourceUrl: string): SourceType {
 }
 
 export function cleanText(rawText: string) {
-  return rawText.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const bannedPatterns = [
+    /^(home|首页|menu|导航)$/i,
+    /^(log in|sign in|登录|注册)$/i,
+    /^(share|分享|copy link|复制链接)$/i,
+    /^(back|返回|next|上一页|下一页)$/i,
+    /^(privacy policy|terms|cookies|隐私政策|服务条款)$/i
+  ];
+
+  const lines = rawText
+    .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line.length > 1)
+    .filter((line) => !bannedPatterns.some((pattern) => pattern.test(line)))
+    .filter((line, index, all) => line.length > 18 || all[index - 1]?.length > 18 || all[index + 1]?.length > 18);
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(line);
+  }
+
+  return deduped.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function buildHostScript(title: string, cleanedText: string, language: OutputLanguage) {
