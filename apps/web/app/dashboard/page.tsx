@@ -1,15 +1,20 @@
 import Link from "next/link";
 import { SiteShell } from "@/components/site-shell";
-import { getCurrentUserFromCookies } from "@/lib/auth";
+import { createDeviceUser, getCurrentUserFromCookies } from "@/lib/auth";
 import { getUsageSummary, listJobSummaries } from "@/lib/store";
 
-export default async function DashboardPage() {
-  const user = await getCurrentUserFromCookies();
+export default async function DashboardPage({
+  searchParams
+}: {
+  searchParams: Promise<{ device_id?: string }>;
+}) {
+  const search = await searchParams;
+  const user = (await getCurrentUserFromCookies()) || (search.device_id ? createDeviceUser(search.device_id) : null);
 
   const [jobs, usage] = await Promise.all([listJobSummaries(user?.id), getUsageSummary(user?.id)]);
 
   return (
-    <SiteShell>
+    <SiteShell deviceId={search.device_id}>
       <div className="grid">
         <section className="hero">
           <div className="card">
@@ -20,10 +25,10 @@ export default async function DashboardPage() {
               watch jobs move through the pipeline, and jump into finished audio.
             </p>
             <div className="actions">
-              <Link className="button" href="/install-extension">
+              <Link className="button" href={search.device_id ? `/install-extension?device_id=${encodeURIComponent(search.device_id)}` : "/install-extension"}>
                 Install extension
               </Link>
-              <Link className="button secondary" href="/history">
+              <Link className="button secondary" href={search.device_id ? `/history?device_id=${encodeURIComponent(search.device_id)}` : "/history"}>
                 View full history
               </Link>
             </div>
@@ -67,7 +72,7 @@ export default async function DashboardPage() {
                     <span>{job.status}</span>
                   </div>
                   <p className="muted">{job.targetDurationMinutes} min target</p>
-                  <Link href={`/jobs/${job.id}`} className="button secondary">
+                  <Link href={`/jobs/${job.id}${search.device_id ? `?device_id=${encodeURIComponent(search.device_id)}` : ""}`} className="button secondary">
                     Open
                   </Link>
                 </div>

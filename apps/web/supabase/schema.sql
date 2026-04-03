@@ -34,6 +34,9 @@ create table if not exists public.jobs (
   id uuid primary key,
   user_id uuid not null references public.users(id) on delete cascade,
   source_id uuid not null references public.sources(id) on delete cascade,
+  auth_mode text not null default 'trial' check (auth_mode in ('trial', 'byo_key')),
+  provider text not null default 'gemini' check (provider in ('openai', 'gemini')),
+  provider_api_key_ciphertext text,
   status text not null check (status in ('queued', 'extracting', 'writing', 'synthesizing', 'succeeded', 'failed')),
   output_language text not null check (output_language in ('zh', 'en')),
   target_duration_minutes int not null check (target_duration_minutes in (3, 5, 8)),
@@ -48,6 +51,10 @@ create table if not exists public.jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.jobs add column if not exists auth_mode text not null default 'trial';
+alter table public.jobs add column if not exists provider text not null default 'gemini';
+alter table public.jobs add column if not exists provider_api_key_ciphertext text;
 
 create index if not exists jobs_user_created_idx on public.jobs(user_id, created_at desc);
 create index if not exists jobs_status_created_idx on public.jobs(status, created_at asc);

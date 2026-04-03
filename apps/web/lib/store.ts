@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomUUID } from "node:crypto";
 import { buildContentHash, buildHostScript, buildSummary, cleanText, detectLanguage, deriveDomain, deriveSourceType, estimateAudioDurationSeconds } from "@/lib/content";
 import { generatePodcastAssets, hasProviderConfig, synthesizeSpeech } from "@/lib/openai";
 import { seededAudios, seededJobs, seededScripts, seededSources, seededUsage, DEMO_USER_ID } from "@/lib/seed-data";
@@ -16,6 +16,76 @@ const runningJobs = new Set<string>();
 const FREE_TRIAL_RUNS = 3;
 const MAX_INLINE_AUDIO_BYTES = 4_000_000;
 const jobSecrets = new Map<string, { provider: ModelProvider; apiKey?: string | null; authMode: AuthMode }>();
+const JOB_META_PREFIX = "polly-meta:";
+
+function getEncryptionKey() {
+  return createHash("sha256").update(process.env.AUTH_SECRET || "polly-dev-secret").digest();
+}
+
+function encryptApiKey(apiKey: string) {
+  const iv = Buffer.from(randomUUID().replace(/-/g, "").slice(0, 24), "hex");
+  const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(apiKey, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+function decryptApiKey(ciphertext?: string | null) {
+  if (!ciphertext) {
+    return null;
+  }
+
+  const [ivPart, tagPart, encryptedPart] = ciphertext.split(".");
+  if (!ivPart || !tagPart || !encryptedPart) {
+    return null;
+  }
+
+  try {
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      getEncryptionKey(),
+      Buffer.from(ivPart, "base64url")
+    );
+    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(encryptedPart, "base64url")),
+      decipher.final()
+    ]);
+    return decrypted.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function encodeJobMeta(job: Pick<JobRecord, "provider" | "authMode" | "providerApiKeyCiphertext">) {
+  const payload = JSON.stringify({
+    provider: job.provider,
+    authMode: job.authMode,
+    providerApiKeyCiphertext: job.providerApiKeyCiphertext ?? null
+  });
+  return `${JOB_META_PREFIX}${Buffer.from(payload).toString("base64url")}`;
+}
+
+function decodeJobMeta(rawValue: unknown) {
+  if (typeof rawValue !== "string" || !rawValue.startsWith(JOB_META_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(rawValue.slice(JOB_META_PREFIX.length), "base64url").toString("utf8")) as {
+      provider?: string;
+      authMode?: string;
+      providerApiKeyCiphertext?: string | null;
+    };
+    return {
+      provider: normalizeProvider(decoded.provider),
+      authMode: decoded.authMode === "byo_key" ? "byo_key" : "trial",
+      providerApiKeyCiphertext: decoded.providerApiKeyCiphertext ?? null
+    } satisfies Pick<JobRecord, "provider" | "authMode" | "providerApiKeyCiphertext">;
+  } catch {
+    return null;
+  }
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -34,6 +104,29 @@ function normalizeDuration(value: number): 3 | 5 | 8 {
 
 function normalizeProvider(value: string | undefined): ModelProvider {
   return value === "gemini" ? "gemini" : "openai";
+}
+
+function isRetryableOpenAIQuotaError(error: unknown) {
+  return error instanceof Error &&
+    error.message.includes("OpenAI text generation failed with 429") &&
+    error.message.includes("insufficient_quota");
+}
+
+function toUserFacingGenerationError(error: unknown, authMode: AuthMode, provider: ModelProvider) {
+  if (error instanceof Error) {
+    if (error.message.includes("OpenAI text generation failed with 429") && error.message.includes("insufficient_quota")) {
+      if (authMode === "trial") {
+        return "Polly's built-in OpenAI trial quota is currently exhausted. Add your own OpenAI or Gemini API key in the extension, or switch the provider to Gemini and try again.";
+      }
+      return `Your ${provider === "openai" ? "OpenAI" : "Gemini"} API key was rejected because the provider reported insufficient quota. Check billing or switch providers.`;
+    }
+    if (error.message.includes("429 rate_limited")) {
+      return `The ${provider === "openai" ? "OpenAI" : "Gemini"} API is rate limiting requests right now. Wait a moment and try again.`;
+    }
+    return error.message;
+  }
+
+  return "Unknown generation failure";
 }
 
 function evolveJob(job: JobRecord): JobRecord {
@@ -304,7 +397,7 @@ async function runJob(
     const sourceText = detail.source.cleanedText ?? detail.source.rawText;
     const secrets = generationOptions ?? jobSecrets.get(jobId) ?? {
       provider: detail.job.provider,
-      apiKey: null,
+      apiKey: decryptApiKey(detail.job.providerApiKeyCiphertext),
       authMode: detail.job.authMode
     };
     const provider = normalizeProvider(secrets.provider);
@@ -317,14 +410,42 @@ async function runJob(
 
     if (hasProviderConfig(provider, secrets.apiKey)) {
       await setJobStatus(jobId, "writing");
-      const generated = await generatePodcastAssets({
-        sourceTitle: detail.source.title,
-        cleanedText: sourceText,
-        outputLanguage: detail.job.outputLanguage,
-        targetDurationMinutes: detail.job.targetDurationMinutes,
-        provider,
-        apiKeyOverride: secrets.apiKey
-      });
+      let effectiveProvider = provider;
+      let generated;
+
+      try {
+        generated = await generatePodcastAssets({
+          sourceTitle: detail.source.title,
+          cleanedText: sourceText,
+          sourceType: detail.source.sourceType,
+          outputLanguage: detail.job.outputLanguage,
+          targetDurationMinutes: detail.job.targetDurationMinutes,
+          provider: effectiveProvider,
+          apiKeyOverride: secrets.apiKey
+        });
+      } catch (error) {
+        const canFallbackToGemini =
+          authMode === "trial" &&
+          effectiveProvider === "openai" &&
+          !secrets.apiKey &&
+          hasProviderConfig("gemini") &&
+          isRetryableOpenAIQuotaError(error);
+
+        if (!canFallbackToGemini) {
+          throw error;
+        }
+
+        effectiveProvider = "gemini";
+        generated = await generatePodcastAssets({
+          sourceTitle: detail.source.title,
+          cleanedText: sourceText,
+          sourceType: detail.source.sourceType,
+          outputLanguage: detail.job.outputLanguage,
+          targetDurationMinutes: detail.job.targetDurationMinutes,
+          provider: effectiveProvider,
+          apiKeyOverride: null
+        });
+      }
 
       script = {
         id: randomUUID(),
@@ -350,9 +471,10 @@ async function runJob(
 
       const speech = await synthesizeSpeech({
         text: generated.scriptText,
+        turns: generated.turns,
         outputLanguage: detail.job.outputLanguage,
-        provider,
-        apiKeyOverride: secrets.apiKey
+        provider: effectiveProvider,
+        apiKeyOverride: effectiveProvider === provider ? secrets.apiKey : null
       });
       if (speech.buffer.byteLength > MAX_INLINE_AUDIO_BYTES && !process.env.SUPABASE_AUDIO_BUCKET) {
         throw new Error("Generated audio is too large for inline fallback. Configure Supabase Storage.");
@@ -366,7 +488,7 @@ async function runJob(
         format: speech.contentType === "audio/wav" ? "wav" : "mp3",
         durationSeconds: estimateAudioDurationSeconds(detail.job.targetDurationMinutes),
         sizeBytes: speech.buffer.byteLength,
-        ttsProvider: provider,
+        ttsProvider: effectiveProvider,
         ttsVoiceId: speech.voice,
         createdAt: nowIso()
       };
@@ -377,9 +499,15 @@ async function runJob(
       await setJobStatus(jobId, "succeeded", {
         title: generated.title,
         summary: generated.summary,
-        errorCode: audioResult.uploadErrorMessage ? "STORAGE_FALLBACK" : null,
+        errorCode: audioResult.uploadErrorMessage
+          ? "STORAGE_FALLBACK"
+          : effectiveProvider !== provider
+            ? "TRIAL_PROVIDER_FALLBACK"
+            : null,
         errorMessage: audioResult.uploadErrorMessage
           ? `Audio uploaded with data URL fallback because storage upload failed: ${audioResult.uploadErrorMessage}`
+          : effectiveProvider !== provider
+            ? "Polly trial OpenAI quota was exhausted, so this run automatically fell back to Gemini."
           : null,
         finishedAt: nowIso()
       });
@@ -425,9 +553,11 @@ async function runJob(
       finishedAt: nowIso()
     });
   } catch (error) {
+    const fallbackProvider = normalizeProvider(generationOptions?.provider);
+    const fallbackAuthMode = generationOptions?.authMode ?? "trial";
     await setJobStatus(jobId, "failed", {
       errorCode: "GENERATION_FAILED",
-      errorMessage: error instanceof Error ? error.message : "Unknown generation failure",
+      errorMessage: toUserFacingGenerationError(error, fallbackAuthMode, fallbackProvider),
       finishedAt: nowIso()
     });
   } finally {
@@ -584,15 +714,18 @@ export async function getJobDetail(jobId: string, userId = DEMO_USER_ID): Promis
     if (!row) {
       return null;
     }
+    const sourceRow = Array.isArray(row.sources) ? row.sources[0] : row.sources;
+    const scriptRow = Array.isArray(row.scripts) ? row.scripts[0] : row.scripts;
+    const audioRow = Array.isArray(row.audios) ? row.audios[0] : row.audios;
+    if (!sourceRow) {
+      return null;
+    }
     const detail = {
       job: mapJobFromSupabase(row),
-      source: mapSourceFromSupabase(row.sources),
-      script: row.scripts?.[0] ? mapScriptFromSupabase(row.scripts[0]) : null,
-      audio: row.audios?.[0] ? mapAudioFromSupabase(row.audios[0]) : null
+      source: mapSourceFromSupabase(sourceRow),
+      script: scriptRow ? mapScriptFromSupabase(scriptRow) : null,
+      audio: audioRow ? mapAudioFromSupabase(audioRow) : null
     };
-    if (detail.job.status !== "succeeded" && detail.job.status !== "failed") {
-      triggerJob(detail.job.id, userId);
-    }
     return detail;
   }
 
@@ -605,15 +738,18 @@ export async function getJobDetail(jobId: string, userId = DEMO_USER_ID): Promis
   if (!source) {
     return null;
   }
-  if (evolved.status !== "succeeded" && evolved.status !== "failed") {
-    triggerJob(evolved.id, userId);
-  }
   return {
     job: evolved,
     source,
     script: memory.scripts.find((item) => item.jobId === evolved.id) ?? null,
     audio: memory.audios.find((item) => item.jobId === evolved.id) ?? null
   };
+}
+
+export async function processJobNow(jobId: string, userId = DEMO_USER_ID) {
+  userId = userId || DEMO_USER_ID;
+  await runJob(jobId, userId);
+  return getJobDetail(jobId, userId);
 }
 
 export async function createSource(input: CreateSourceInput, userId = DEMO_USER_ID) {
@@ -700,6 +836,7 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
     sourceId: input.sourceId,
     authMode,
     provider,
+    providerApiKeyCiphertext: input.apiKey ? encryptApiKey(input.apiKey) : null,
     status: "queued",
     outputLanguage: input.outputLanguage,
     targetDurationMinutes,
@@ -716,10 +853,11 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
 
   if (supabase) {
     await ensureSupabaseUser(userId);
-    const { error } = await supabase.from("jobs").insert({
+    const baseInsert = {
       id: job.id,
       user_id: job.userId,
       source_id: job.sourceId,
+      voice_id: encodeJobMeta(job),
       status: job.status,
       output_language: job.outputLanguage,
       target_duration_minutes: job.targetDurationMinutes,
@@ -729,9 +867,27 @@ export async function createJob(input: CreateJobInput, userId = DEMO_USER_ID) {
       created_at: job.createdAt,
       updated_at: job.updatedAt,
       started_at: job.startedAt
+    };
+    const { error } = await supabase.from("jobs").insert({
+      ...baseInsert,
+      auth_mode: job.authMode,
+      provider: job.provider,
+      provider_api_key_ciphertext: job.providerApiKeyCiphertext
     });
     if (error) {
-      throw error;
+      const message = "message" in error ? String(error.message) : "";
+      if (
+        message.includes("auth_mode") ||
+        message.includes("provider") ||
+        message.includes("provider_api_key_ciphertext")
+      ) {
+        const fallback = await supabase.from("jobs").insert(baseInsert);
+        if (fallback.error) {
+          throw fallback.error;
+        }
+      } else {
+        throw error;
+      }
     }
     triggerJob(job.id, userId, {
       provider,
@@ -759,7 +915,10 @@ export async function retryJob(jobId: string, userId = DEMO_USER_ID) {
   return createJob({
     sourceId: detail.source.id,
     outputLanguage: detail.job.outputLanguage,
-    targetDurationMinutes: detail.job.targetDurationMinutes
+    targetDurationMinutes: detail.job.targetDurationMinutes,
+    authMode: detail.job.authMode,
+    provider: detail.job.provider,
+    apiKey: decryptApiKey(detail.job.providerApiKeyCiphertext)
   }, userId);
 }
 
@@ -786,8 +945,9 @@ function mapJobFromSupabase(row: Record<string, unknown>): JobRecord {
     id: String(row.id),
     userId: String(row.user_id),
     sourceId: String(row.source_id),
-    authMode: "trial",
-    provider: "openai",
+    authMode: (row.auth_mode as AuthMode) ?? decodeJobMeta(row.voice_id)?.authMode ?? "trial",
+    provider: normalizeProvider((row.provider as string | undefined) ?? decodeJobMeta(row.voice_id)?.provider),
+    providerApiKeyCiphertext: (row.provider_api_key_ciphertext as string | null) ?? decodeJobMeta(row.voice_id)?.providerApiKeyCiphertext ?? null,
     status: row.status as JobRecord["status"],
     outputLanguage: row.output_language as OutputLanguage,
     targetDurationMinutes: Number(row.target_duration_minutes) as 3 | 5 | 8,

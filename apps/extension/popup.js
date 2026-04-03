@@ -47,14 +47,16 @@ async function setTrialRunsUsed(value) {
 
 async function getStoredUserKey() {
   const result = await getStorage([USER_KEY_STORAGE]);
-  return result[USER_KEY_STORAGE] || { provider: "openai", apiKey: "" };
+  return result[USER_KEY_STORAGE] || { provider: "gemini", apiKey: "" };
 }
 
 async function persistUserKey() {
+  const provider = providerSelect.value || "gemini";
+  const apiKey = apiKeyInput.value.trim();
   await setStorage({
     [USER_KEY_STORAGE]: {
-      provider: providerSelect.value,
-      apiKey: apiKeyInput.value.trim()
+      provider,
+      apiKey
     }
   });
 }
@@ -65,7 +67,7 @@ async function refreshPopupState() {
   const storedKey = await getStoredUserKey();
   const appUrl = await getAppUrl();
 
-  providerSelect.value = storedKey.provider || "openai";
+  providerSelect.value = storedKey.provider || "gemini";
   apiKeyInput.value = storedKey.apiKey || "";
   accountEmailEl.textContent = storedKey.apiKey ? `BYO ${providerSelect.value}` : "Trial";
   minutesRemainingEl.textContent = String(trialRunsRemaining);
@@ -91,8 +93,15 @@ generateButton?.addEventListener("click", async () => {
   const appUrl = await getAppUrl();
   const trialRunsUsed = await getTrialRunsUsed();
   const trialRunsRemaining = Math.max(0, FREE_TRIAL_RUNS - trialRunsUsed);
-  const storedKey = await getStoredUserKey();
-  const usingOwnKey = Boolean(storedKey.apiKey?.trim());
+  const provider = providerSelect.value || "gemini";
+  const apiKey = apiKeyInput.value.trim();
+  await setStorage({
+    [USER_KEY_STORAGE]: {
+      provider,
+      apiKey
+    }
+  });
+  const usingOwnKey = Boolean(apiKey);
 
   if (!usingOwnKey && trialRunsRemaining <= 0) {
     statusEl.textContent = "Your 3 free runs are used up. Paste your OpenAI or Gemini API key to continue.";
@@ -218,8 +227,8 @@ generateButton?.addEventListener("click", async () => {
         output_language: languageSelect.value,
         target_duration_minutes: Number(durationSelect.value),
         auth_mode: usingOwnKey ? "byo_key" : "trial",
-        provider: providerSelect.value,
-        user_api_key: usingOwnKey ? storedKey.apiKey : null
+        provider,
+        user_api_key: usingOwnKey ? apiKey : null
       })
     });
     const jobData = await jobResponse.json();

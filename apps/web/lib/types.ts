@@ -32,6 +32,7 @@ export type JobRecord = {
   sourceId: string;
   authMode: AuthMode;
   provider: ModelProvider;
+  providerApiKeyCiphertext?: string | null;
   status: JobStatus;
   outputLanguage: OutputLanguage;
   targetDurationMinutes: 3 | 5 | 8;

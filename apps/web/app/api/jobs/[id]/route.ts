@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { jsonWithCors, optionsWithCors } from "@/lib/api";
 import { createDeviceUser, getCurrentUserFromRequest, getDeviceIdFromRequest } from "@/lib/auth";
-import { getJobDetail } from "@/lib/store";
+import { getJobDetail, processJobNow } from "@/lib/store";
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const user = (await getCurrentUserFromRequest(request)) || (getDeviceIdFromRequest(request) ? createDeviceUser(getDeviceIdFromRequest(request)!) : null);
@@ -18,7 +18,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   }
 
   const { id } = await context.params;
-  const detail = await getJobDetail(id, user.id);
+  const shouldAdvance = request.nextUrl.searchParams.get("advance") === "1";
+  const detail = shouldAdvance ? await processJobNow(id, user.id) : await getJobDetail(id, user.id);
 
   if (!detail) {
     return jsonWithCors(

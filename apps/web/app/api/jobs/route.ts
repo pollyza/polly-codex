@@ -36,9 +36,9 @@ export async function POST(request: NextRequest) {
     job = await createJob({
       sourceId: body.source_id,
       outputLanguage: body.output_language ?? "zh",
-      targetDurationMinutes: Number(body.target_duration_minutes ?? 5),
+      targetDurationMinutes: Number(body.target_duration_minutes ?? 3),
       authMode: body.auth_mode === "byo_key" ? "byo_key" : "trial",
-      provider: body.provider === "gemini" ? "gemini" : "openai",
+      provider: body.provider === "openai" ? "openai" : "gemini",
       apiKey: typeof body.user_api_key === "string" ? body.user_api_key : null
     }, user.id);
   } catch (error) {
